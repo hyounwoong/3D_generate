@@ -1,0 +1,145 @@
+# Blender Python 스크립트를 저장할 경로
+blender_script_path = "/content/render_script.py"
+
+# Blender Python 스크립트 내용
+blender_script_content = """
+import bpy
+import math
+import mathutils
+import os
+
+# 모델 중심 (모델이 (0, 0, 15)에 위치한다고 가정)
+model_center = mathutils.Vector((0, 0, 15))
+
+# 쿼리 카메라 위치 및 회전
+query_camera_location = mathutils.Vector((0, -160, 15))
+query_camera_rotation = (math.radians(90), 0, 0)
+
+# 타겟 이미지 설정 (고도, 아지무스)
+target_views = [
+    {'elevation': 20, 'azimuth': 30},
+    {'elevation': -10, 'azimuth': 90},
+    {'elevation': 20, 'azimuth': 150},
+    {'elevation': -10, 'azimuth': 210},
+    {'elevation': 20, 'azimuth': 270},
+    {'elevation': -10, 'azimuth': 330}
+]
+
+# 환경 조명 설정 함수
+def setup_environment_lighting(strength=4):
+    bpy.context.scene.world.use_nodes = True
+    nodes = bpy.context.scene.world.node_tree.nodes
+    links = bpy.context.scene.world.node_tree.links
+
+    # 기존 노드 삭제
+    for node in nodes:
+        nodes.remove(node)
+
+    # 배경 노드 생성
+    background_node = nodes.new(type="ShaderNodeBackground")
+    background_node.inputs[1].default_value = strength  # 환경 조명 강도 설정
+
+    # 출력 노드 생성
+    output_node = nodes.new(type="ShaderNodeOutputWorld")
+
+    # 노드 연결
+    links.new(background_node.outputs[0], output_node.inputs[0])
+    print(f"환경 조명 설정 완료: 강도 {strength}")
+
+# 모델 로드 함수
+def load_model(filepath):
+    bpy.ops.object.select_all(action='SELECT')
+    bpy.ops.object.delete()
+    bpy.ops.import_scene.obj(filepath=filepath)
+    print(f"모델이 성공적으로 로드되었습니다: {filepath}")
+
+# 카메라 설정 함수 (Orthographic 모드 사용)
+def setup_camera(location, rotation=None, ortho_scale=100):
+    camera = None
+    for obj in bpy.data.objects:
+        if obj.type == 'CAMERA':
+            camera = obj
+            break
+    if camera is None:
+        bpy.ops.object.camera_add(location=(0, 0, 0))
+        camera = bpy.context.object
+
+    # 카메라 위치 및 회전 설정
+    camera.location = location
+    if rotation:
+        camera.rotation_euler = rotation
+
+    # 카메라를 Orthographic 모드로 설정
+    camera.data.type = 'ORTHO'
+    camera.data.ortho_scale = ortho_scale  # Orthographic 크기 조정
+
+    bpy.context.scene.camera = camera
+    print(f"카메라 위치: {camera.location}")
+    print(f"카메라 회전: {camera.rotation_euler}")
+    return camera
+
+# 렌더링 함수
+def render_image(output_file):
+    bpy.context.scene.render.engine = 'CYCLES'
+    bpy.context.scene.render.image_settings.file_format = 'PNG'
+    bpy.context.scene.render.resolution_x = 1024  # 1:1 비율 가로 해상도
+    bpy.context.scene.render.resolution_y = 1024  # 1:1 비율 세로 해상도
+    bpy.context.scene.render.filepath = output_file
+    bpy.ops.render.render(write_still=True)
+    print(f"렌더링 완료: {output_file}")
+
+# 데이터 처리 및 렌더링
+def process_data(root_folder, output_folder):
+    for person_folder in os.listdir(root_folder):
+        person_path = os.path.join(root_folder, person_folder)
+        if os.path.isdir(person_path):
+            for expression_folder in os.listdir(person_path):
+                expression_path = os.path.join(person_path, expression_folder)
+                obj_file = os.path.join(expression_path, f"{person_folder}_FC_{expression_folder}.obj")
+                if not os.path.exists(obj_file):
+                    print(f"OBJ 파일 누락: {obj_file}")
+                    continue
+
+                expression_output_folder = os.path.join(output_folder, person_folder, expression_folder)
+                os.makedirs(expression_output_folder, exist_ok=True)
+
+                load_model(obj_file)
+
+                # 환경 조명 설정
+                setup_environment_lighting(strength=5)  # 환경 조명 강도 설정
+
+                # 쿼리 이미지 생성
+                query_output_file = os.path.join(expression_output_folder, "query.png")
+                setup_camera(query_camera_location, query_camera_rotation, ortho_scale=40)
+                render_image(query_output_file)
+
+                # 타겟 이미지 생성
+                camera_distance = 80
+                for i, view in enumerate(target_views):
+                    azimuth_rad = math.radians(view['azimuth'])
+                    elevation_rad = math.radians(view['elevation'])
+                    camera_location = model_center + mathutils.Vector((
+                        camera_distance * math.cos(elevation_rad) * math.sin(azimuth_rad),
+                        camera_distance * math.cos(elevation_rad) * math.cos(azimuth_rad),
+                        camera_distance * math.sin(elevation_rad)
+                    ))
+                    direction = model_center - camera_location
+                    rotation = direction.to_track_quat('-Z', 'Y').to_euler()
+
+                    target_output_file = os.path.join(expression_output_folder, f"target_{i+1}.png")
+                    setup_camera(camera_location, rotation, ortho_scale=40)
+                    render_image(target_output_file)
+
+if __name__ == "__main__":
+    root_folder = "/content/drive/MyDrive/DPressedD/Validation/SourceD"
+    output_folder = "/content/drive/MyDrive/rendered_images"
+    process_data(root_folder, output_folder)
+"""
+
+# 파일에 저장
+with open(blender_script_path, "w") as file:
+    file.write(blender_script_content)
+
+
+#블렌더 실행(블랜더 경로바꾸기)
+!blender/blender -b --python /content/render_script.py
